@@ -1,5 +1,6 @@
 package com.pablo.aerolinea.dto;
 
+import com.pablo.aerolinea.dto.validation.FechasValidas;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
@@ -8,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
+@FechasValidas
 public class VueloRequestDto {
 
     @NotBlank(message = "El origen es obligatorio")
@@ -27,7 +29,7 @@ public class VueloRequestDto {
     private String aerolinea;
 
     @NotNull(message = "El precio es obligatorio")
-    @Positive(message = "El precio debe ser mayot a 0")
+    @Positive(message = "El precio debe ser mayor a 0")
     private BigDecimal precio;
 
     @NotNull(message = "Los asientos disponibles son obligatorios")

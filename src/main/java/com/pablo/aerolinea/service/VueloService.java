@@ -1,5 +1,6 @@
 package com.pablo.aerolinea.service;
 
+import com.pablo.aerolinea.exception.ReglaDeNegocioException;
 import com.pablo.aerolinea.model.EstadoVuelo;
 import com.pablo.aerolinea.model.Vuelo;
 import com.pablo.aerolinea.repository.VueloRepository;
@@ -32,10 +33,10 @@ public class VueloService {
 
     public Vuelo crearVuelo(Vuelo vuelo) {
         if (vuelo.getFechaLlegada().isBefore(vuelo.getFechaSalida())) {
-            throw new IllegalArgumentException("La fecha de llegafa no puede ser anterior a la fecha de salida.");
+            throw new ReglaDeNegocioException("La fecha de llegafa no puede ser anterior a la fecha de salida.");
         }
         if (vuelo.getPrecio().signum() <= 0) {
-            throw new IllegalArgumentException("El precio debe ser mayor a 0.");
+            throw new ReglaDeNegocioException("El precio debe ser mayor a 0.");
         }
         vuelo.setEstado(EstadoVuelo.PROGRAMADO);
         return vueloRepository.save(vuelo);
