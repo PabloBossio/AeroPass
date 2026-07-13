@@ -24,7 +24,7 @@ public class VueloController {
 
     @PostMapping
     public ResponseEntity<VueloResponseDto> crear(@Valid @RequestBody VueloRequestDto request) {
-        Vuelo creado = vueloService.crearVuelo(VueloMapper.toEntity(request));
+        Vuelo creado = vueloService.crearVuelo(VueloMapper.toEntity(request), request.getAvionId());
         return ResponseEntity.status(HttpStatus.CREATED).body(VueloMapper.toResponseDto(creado));
     }
 

@@ -71,6 +71,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
 
+    @ExceptionHandler(RecursoNoEncontradoException.class)
+    public ResponseEntity<ErrorResponseDto> manejarRecursoNoEncontrado(RecursoNoEncontradoException ex, WebRequest request) {
+        ErrorResponseDto error = ErrorResponseDto.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.NOT_FOUND.value())
+                .error("Recurso no encontrado")
+                .mensaje(ex.getMessage())
+                .path(extraerPath(request))
+                .build();
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
     private String extraerPath(WebRequest request) {
         return ((ServletWebRequest) request).getRequest().getRequestURI();
     }

@@ -1,6 +1,7 @@
 package com.pablo.aerolinea.dto;
 
 import com.pablo.aerolinea.dto.validation.FechasValidas;
+import com.pablo.aerolinea.model.Avion;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
@@ -25,9 +26,6 @@ public class VueloRequestDto {
     @NotNull(message = "La fecha de llegada es obligatoria")
     private LocalDateTime fechaLlegada;
 
-    @NotBlank(message = "La aerolinea es obligatoria")
-    private String aerolinea;
-
     @NotNull(message = "El precio es obligatorio")
     @Positive(message = "El precio debe ser mayor a 0")
     private BigDecimal precio;
@@ -35,4 +33,7 @@ public class VueloRequestDto {
     @NotNull(message = "Los asientos disponibles son obligatorios")
     @Min(value = 1, message = "Debe haber al menos 1 asiento disponible")
     private Integer asientosDisponibles;
+
+    @NotNull(message = "El id del avion es obligatorio")
+    private Long avionId;
 }

@@ -31,9 +31,6 @@ public class Vuelo {
     @Column(name = "fecha_llegada",nullable = false)
     private LocalDateTime fechaLlegada;
 
-    @Column(nullable = false)
-    private String aerolinea;
-
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal precio;
 
@@ -43,4 +40,8 @@ public class Vuelo {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private EstadoVuelo estado;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "avion_id", nullable = false)
+    private Avion avion;
 }

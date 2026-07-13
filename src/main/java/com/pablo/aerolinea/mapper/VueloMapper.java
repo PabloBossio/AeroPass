@@ -12,7 +12,6 @@ public class VueloMapper {
                 .destino(dto.getDestino())
                 .fechaSalida(dto.getFechaSalida())
                 .fechaLlegada(dto.getFechaLlegada())
-                .aerolinea(dto.getAerolinea())
                 .precio(dto.getPrecio())
                 .asientosDisponibles(dto.getAsientosDisponibles())
                 .build();
@@ -25,10 +24,10 @@ public class VueloMapper {
         dto.setDestino(vuelo.getDestino());
         dto.setFechaSalida(vuelo.getFechaSalida());
         dto.setFechaLlegada(vuelo.getFechaLlegada());
-        dto.setAeerolinea(vuelo.getAerolinea());
         dto.setPrecio(vuelo.getPrecio());
         dto.setAsientosDisponibles(vuelo.getAsientosDisponibles());
         dto.setEstado(vuelo.getEstado());
+        dto.setAvion(AvionMapper.toResponseDTO(vuelo.getAvion()));
         return dto;
     }
 }

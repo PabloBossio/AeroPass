@@ -14,8 +14,8 @@ public class VueloResponseDto {
     private String destino;
     private LocalDateTime fechaSalida;
     private LocalDateTime fechaLlegada;
-    private String aeerolinea;
     private BigDecimal precio;
     private Integer asientosDisponibles;
     private EstadoVuelo estado;
+    private AvionResponseDTO avion;
 }
