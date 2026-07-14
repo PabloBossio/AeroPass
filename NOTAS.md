@@ -41,6 +41,19 @@ En vez de que una clase cree sus propias dependencias con `new`, se las inyectan
 
 ---
 
+## Seguridad (contraseñas, antes de llegar al módulo de JWT)
+
+- **`spring-security-crypto`** es un artefacto separado del starter completo de Spring Security (`spring-boot-starter-security`). Da acceso a `BCryptPasswordEncoder` **sin** disparar la autoconfiguración que bloquea todos los endpoints con login automático (esa autoconfiguración depende de `spring-security-web`/`spring-security-config`, no de `spring-security-crypto`). Útil para encriptar contraseñas desde ya, antes de meterse con JWT.
+- `passwordEncoder.encode(texto)` genera un hash irreversible (formato `$2a$10$...`); no se "desencripta", solo se compara con `passwordEncoder.matches(textoPlano, hash)` (esto se usa en el login, más adelante).
+- **Nunca** devolver el password (ni el hash) en un DTO de respuesta — es exactamente el tipo de fuga que el patrón DTO existe para evitar.
+- Igual que se fuerza `estado = PROGRAMADO` al crear un `Vuelo`, se fuerza `rol = USUARIO` al registrar un `Usuario` — nunca confiar en un rol que venga del cliente en el registro público. Crear un `ADMIN` es una operación aparte (a definir más adelante, probablemente restringida a otro admin ya autenticado).
+
+**`@Configuration` + `@Bean`**: para registrar como bean de Spring una clase que **no es tuya** (no la podés anotar con `@Component`/`@Service`, como `BCryptPasswordEncoder` de una librería externa). Se escribe una clase `@Configuration` con métodos `@Bean` — cada método devuelve un objeto que Spring gestiona y que después se puede inyectar por constructor en cualquier otra clase, igual que un bean propio.
+
+**Nuevas validaciones de Bean Validation**: `@Email` (formato de email válido) y `@Size(min = ..., max = ...)` (longitud de un String) — mismo mecanismo ya conocido, reglas distintas.
+
+---
+
 ## Lombok
 
 - `@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder`: para **entidades** (`@Entity`).
