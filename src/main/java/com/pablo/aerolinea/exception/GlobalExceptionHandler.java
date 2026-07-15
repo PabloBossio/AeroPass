@@ -5,12 +5,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -82,6 +85,45 @@ public class GlobalExceptionHandler {
                 .build();
 
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponseDto> manejarJsonMalFormado(HttpMessageNotReadableException ex, WebRequest request) {
+        ErrorResponseDto error = ErrorResponseDto.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error("JSON invalido")
+                .mensaje("El cuerpo de la request no tiene un formato JSON valido")
+                .path(extraerPath(request))
+                .build();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponseDto> manejarTipoInvalido(MethodArgumentTypeMismatchException ex, WebRequest request) {
+        ErrorResponseDto error = ErrorResponseDto.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error("Tipo de dato invalido")
+                .mensaje("El valor '" + ex.getValue() + "' no es valido para el parametro '" + ex.getName() + "'")
+                .path(extraerPath(request))
+                .build();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponseDto> manejarMetodoNoSoportado(HttpRequestMethodNotSupportedException ex, WebRequest request) {
+        ErrorResponseDto error = ErrorResponseDto.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.METHOD_NOT_ALLOWED.value())
+                .error("Metodo incorrecto")
+                .mensaje("El metodo " + ex.getMethod() + " no es el esperado por este endpoint")
+                .path(extraerPath(request))
+                .build();
+
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(error);
     }
 
     private String extraerPath(WebRequest request) {

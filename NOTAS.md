@@ -83,6 +83,18 @@ En vez de que una clase cree sus propias dependencias con `new`, se las inyectan
 
 **Validación cruzada entre campos (cross-field)**: las anotaciones estándar (`@NotNull`, `@Positive`, etc.) validan un campo aislado. Para reglas que comparan dos campos entre sí (ej: fechaLlegada posterior a fechaSalida), se define una anotación propia a **nivel de clase** (`@Target(ElementType.TYPE)`) con su propio `ConstraintValidator`.
 
+**El patrón DTO/Mapper no es rígido.** `Reserva` no tiene un `toEntity` en su mapper porque el service ya recibe los ids (`usuarioId`, `vueloId`) directo y arma la entidad buscando las relaciones reales — no hace falta forzar el mismo mapeo 1:1 que usan `Vuelo`/`Avion` si no aporta nada en ese caso.
+
+---
+
+## Reservas: transacciones multi-entidad y snapshots
+
+- **Snapshot histórico**: `Reserva.precioPagado` copia el precio del vuelo *al momento de reservar*, en vez de leer `vuelo.getPrecio()` dinámicamente. El precio de un vuelo puede cambiar después; lo que alguien pagó en el pasado es un hecho histórico que no debe cambiar con él. A veces duplicar un dato a propósito (en vez de todo "normalizado") es el modelado correcto — es una fotografía de un momento, no una referencia viva.
+- **Acá `@Transactional` importa de verdad**: `crearReserva` escribe en dos tablas (descuenta `asientosDisponibles` del vuelo Y crea la reserva). Sin la transacción, un fallo a mitad de camino dejaría un asiento "perdido" sin ninguna reserva que lo explique.
+- **Race condition detectada (pendiente de resolver con locking)**: si dos requests reservan el último asiento de un vuelo *al mismo tiempo*, ambas pueden leer "queda 1" antes de que cualquiera escriba el descuento, y las dos tendrían éxito — sobreventa. Se resuelve con bloqueo pesimista (`@Lock(LockModeType.PESSIMISTIC_WRITE)`, un `SELECT ... FOR UPDATE` que bloquea la fila hasta que termina la transacción) o bloqueo optimista (`@Version`, que detecta el conflicto al momento de escribir y falla la segunda transacción para reintentar). Próximo módulo: implementar el pesimista para verlo en acción.
+- Derived query methods pueden "atravesar" relaciones: `findByUsuarioId(Long usuarioId)` en `ReservaRepository` filtra por el `id` del `Usuario` relacionado (vía `@ManyToOne`), generando el JOIN automáticamente.
+- `PUT` para acciones de cambio de estado sobre un recurso existente (ej. `PUT /api/reservas/{id}/cancelar`), a diferencia de `POST` que crea un recurso nuevo. (Un purista de REST diría que `PATCH` es más preciso para modificaciones parciales — matiz fino, `PUT` es aceptado en la práctica.)
+
 ---
 
 ## Manejo global de excepciones
@@ -96,6 +108,12 @@ En vez de que una clase cree sus propias dependencias con `new`, se las inyectan
 - Para errores realmente inesperados (`Exception` genérica): loguear el detalle real del lado del servidor (`log.error(...)`) pero devolver al cliente un mensaje genérico.
 
 **Bug real encontrado: `FieldError` vs `ObjectError`.** Al validar, Spring separa los errores en dos tipos: `FieldError` (atado a un campo puntual, ej. `@Positive` en `precio`) y `ObjectError` (atado a la clase entera, ej. una validación cruzada como `@FechasValidas` con `@Target(TYPE)`). `getFieldErrors()` en el `BindingResult` **solo** trae los `FieldError` — si armás la lista de detalles con eso, los errores de validaciones a nivel de clase quedan invisibles (lista vacía) aunque el request sí se rechace. Solución: usar `getAllErrors()` (trae ambos tipos, ya que `FieldError` es subclase de `ObjectError`) y distinguir con `instanceof FieldError fieldError` para saber si mostrar el nombre del campo o no.
+
+**Regla general: cada tipo de excepción tiene su código HTTP semánticamente correcto, no todo es `400` o `500`.** Cualquier excepción sin un `@ExceptionHandler` específico cae en el genérico (`Exception` → `500`), aunque la causa real sea un error del cliente. Handlers agregados a medida que se fueron encontrando estos casos, todos con el mismo esqueleto (armar `ErrorResponseDto`, elegir el status correcto):
+- `RecursoNoEncontradoException` (propia) → `404 Not Found` — ej. buscar un `Avion`/`Usuario`/`Vuelo` por un id que no existe.
+- `HttpMessageNotReadableException` → `400 Bad Request` — JSON mal formado (ej. mandar un array `[ ]` en vez de un objeto `{ }`).
+- `MethodArgumentTypeMismatchException` → `400 Bad Request` — un `@PathVariable`/`@RequestParam` con un tipo incorrecto (ej. mandar texto donde se espera un `Long`). Trae `ex.getValue()` y `ex.getName()` para armar un mensaje útil.
+- `HttpRequestMethodNotSupportedException` → `405 Method Not Allowed` — pedir un verbo HTTP (GET/POST/PUT/DELETE) que esa ruta puntual no soporta. Trae `ex.getMethod()`.
 
 ---
 
