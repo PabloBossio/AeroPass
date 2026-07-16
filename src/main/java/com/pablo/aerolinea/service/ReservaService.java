@@ -40,9 +40,9 @@ public class ReservaService {
         Usuario usuario = usuarioRepository.findById(usuarioId)
                 .orElseThrow(() -> new RecursoNoEncontradoException("No existe un usuario con ese id: " + usuarioId));
 
-        Vuelo vuelo = vueloRepository.findById(vueloId)
+        Vuelo vuelo = vueloRepository.buscarPorIdConBloqueo(vueloId)
                 .orElseThrow(() -> new RecursoNoEncontradoException("No existe un vuelo con ese id: " + vueloId));
-
+        
         if (vuelo.getEstado() != EstadoVuelo.PROGRAMADO) {
             throw new ReglaDeNegocioException("Solo se reservar vuelos en estado PROGRAMADO");
         }
