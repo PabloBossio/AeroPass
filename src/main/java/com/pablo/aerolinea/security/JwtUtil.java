@@ -39,7 +39,7 @@ public class JwtUtil {
     }
 
     public String extraerRol(String token) {
-        return extraerClaim(token, claims -> claims.get("Rol", String.class));
+        return extraerClaim(token, claims -> claims.get("rol", String.class));
     }
 
     public boolean esTokenValido(String token, String email) {

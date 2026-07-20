@@ -133,12 +133,38 @@ Ojo de sintaxis: con más de un atributo en `@Query` (`value` y `nativeQuery`), 
 
 ---
 
+## Seguridad: Spring Security + JWT completo
+
+- Apenas agregás la dependencia `spring-boot-starter-security` al `pom.xml`, Spring Boot autoconfigura un bloqueo total: **todos** los endpoints piden autenticación (login básico con un usuario generado, `user`, y una contraseña random impresa en consola). Hace falta un bean `SecurityFilterChain` propio para reemplazar ese comportamiento por defecto con reglas explícitas.
+- **`csrf(csrf -> csrf.disable())`**: CSRF (Cross-Site Request Forgery) es un ataque que explota que el *browser* manda automáticamente las cookies de sesión en cualquier request, incluso a sitios de terceros. Ese modelo de ataque no aplica a una API stateless donde el cliente tiene que adjuntar manualmente el header `Authorization: Bearer <token>` — por eso es estándar (no una vulnerabilidad) desactivar CSRF en APIs REST con JWT.
+- **`SessionCreationPolicy.STATELESS`**: le dice a Spring Security que nunca cree ni consulte una `HttpSession`. Cada request tiene que probar quién es por sí solo (con el JWT); el servidor no "recuerda" nada entre requests. Esto es lo que hace posible escalar horizontalmente sin sincronizar sesiones entre instancias.
+- **`UserDetailsService`** (interfaz de Spring Security): un solo método, `loadUserByUsername(String username)`. Es el punto donde Spring Security te pregunta "¿quién es este usuario y qué permisos tiene?" — vos lo implementás (`UsuarioDetailsService`) buscando en tu propio `UsuarioRepository` y devolviendo un objeto `UserDetails` (acá se usó el `User.builder()` que trae Spring Security, con username=email, password=hash, y las `authorities`).
+- **`AuthenticationManager`**: el componente que efectivamente *ejecuta* la autenticación (compara credenciales recibidas contra las reales, usando el `UserDetailsService` y el `PasswordEncoder` por detrás). Spring Boot no lo expone como bean por defecto; hay que sacarlo explícitamente de `AuthenticationConfiguration.getAuthenticationManager()` en un método `@Bean` propio para poder inyectarlo (ej. en `AuthController`).
+- **Convención `ROLE_`**: `hasRole("ADMIN")` en las reglas de autorización busca, por detrás, una authority que se llame literalmente `"ROLE_ADMIN"` (agrega el prefijo solo). Por eso `UsuarioDetailsService` arma la authority como `"ROLE_" + usuario.getRol().name()` — si te olvidás el prefijo al construirla a mano, `hasRole(...)` nunca la va a matchear.
+- **JWT (JSON Web Token)**: un token con 3 partes separadas por puntos (header.payload.signature), donde el payload lleva "claims" (acá: `sub` = email, `rol`, `iat` = fecha de emisión, `exp` = fecha de expiración) codificados en Base64 (no encriptados — cualquiera puede decodificarlos, ej. en jwt.io; lo que garantiza que no fueron alterados es la firma, verificable solo con la clave secreta del servidor). Librería usada: `io.jsonwebtoken` (jjwt), que a diferencia de los starters de Spring **sí** necesita versión explícita en el `pom.xml` porque no está gestionada por el BOM de Spring Boot.
+- **`OncePerRequestFilter`**: clase base de Spring para escribir un filtro de servlet que se garantiza ejecutar una sola vez por request (evita duplicados en ciertos escenarios de forwards internos de Servlet). Ahí vive `JwtAuthenticationFilter`: lee el header `Authorization`, valida el JWT, y si es válido, carga el usuario y lo autentica manualmente.
+- **`SecurityContextHolder`**: el lugar (en el hilo actual) donde Spring Security guarda "quién es el usuario autenticado en este request ahora mismo". Los filtros lo leen/escriben; las reglas de autorización (`hasRole`, `authenticated()`) lo consultan al final de la cadena.
+- **Dato importante sobre de dónde sale el rol real**: la autorización de cada request **no** se basa en el claim `rol` que viene *dentro* del JWT, sino en lo que devuelve `UsuarioDetailsService.loadUserByUsername(email)` en ese momento — es decir, una consulta fresca a la base de datos. El JWT solo se usa para decir *quién sos* (el email); qué permisos tenés se recalcula siempre desde la fuente de verdad (la tabla `usuarios`). Ventaja de este diseño: si le cambiás el rol a un usuario en la base, el cambio aplica inmediatamente en su próximo request, sin esperar a que expire o se regenere su token viejo.
+- **`addFilterBefore(miFiltro, UsernamePasswordAuthenticationFilter.class)`**: inserta un filtro propio en un punto específico de la cadena de filtros que arma Spring Security (que ya trae ~15 filtros propios por defecto). Acá se usa para que `JwtAuthenticationFilter` corra temprano, antes de que la cadena llegue a la parte de autorización final.
+- **`requestMatchers(...)` se evalúan en orden, gana el primero que matchea.** Por eso las reglas más específicas (ej. `GET /api/vuelos/**` público) tienen que ir *antes* que una regla más genérica que cubra la misma ruta (ej. `POST/PUT/DELETE /api/vuelos/**` solo `ADMIN`), y la más genérica de todas (`anyRequest().authenticated()`) siempre al final, como default de cierre.
+- **`permitAll()` vs `authenticated()` vs `hasRole("X")`**: sin autenticación / cualquier usuario autenticado sin importar el rol / usuario autenticado y además con ese rol específico. Se combinan por ruta y por verbo HTTP (`HttpMethod.GET`, `POST`, etc.) según la regla de negocio de cada recurso.
+
+**Bug real: faltaba `@PostMapping("/login")` en el método del controller.** `@RequestMapping("/api/auth")` a nivel de clase solo define el *prefijo* de ruta — no alcanza por sí solo para exponer un endpoint. Sin una anotación de verbo HTTP (`@PostMapping`, `@GetMapping`, etc.) en el método, Spring nunca registra ese método como handler de nada. El síntoma fue confuso: no dio un error de compilación ni un `404` típico, sino `NoResourceFoundException` (`500` con nuestro handler genérico) — porque al no encontrar ningún controller que matchee la ruta, Spring Boot cae al manejador de recursos estáticos por defecto (el mismo que serviría un `index.html`), que tampoco encuentra nada y tira esa excepción.
+
+**Bug real (case-sensitivity en claims de JWT):** `generarToken` guarda el claim como `.claim("rol", rol)` (minúscula), pero `extraerRol` lo buscaba con `claims.get("Rol", String.class)` (mayúscula). Los nombres de claims de un JWT son case-sensitive — con esa diferencia, `extraerRol` siempre devuelve `null`. No rompió nada todavía porque ese método no se usa en el filtro (la autorización usa el rol fresco desde la base, no el del token), pero quedó anotado para el día que sí se necesite leer ese claim.
+
+**Detalle a tener en cuenta (no arreglado todavía, anotado como mejora futura):** `JwtAuthenticationFilter` no tiene `try/catch` alrededor del parseo del token. Si llega un token malformado/corrupto, `Jwts.parser()...parseSignedClaims(token)` tira una excepción sin capturar. Como este filtro corre *antes* que `ExceptionTranslationFilter` en la cadena de Spring Security (el componente que normalmente traduce esas excepciones a respuestas `401`/`403` prolijas), una excepción ahí no se traduce — se propaga como error crudo del servidor. Mejora pendiente: envolver ese parseo en un `try/catch` y tratar un token inválido simplemente como "no autenticado" en vez de dejar que explote.
+
+**Postman — el campo de token enmascarado no siempre se puede copiar completo.** La pestaña Authorization → Bearer Token oculta el valor por ser un dato sensible, y en algunos casos el copiado (`Ctrl+A` + `Ctrl+C`) desde ese campo enmascarado no trae el string completo. Más confiable: copiar el token directo desde el **body de la respuesta JSON del login** (ahí no hay ningún enmascarado, es texto plano).
+
+---
+
 ## Próximos temas pendientes (roadmap)
 
-1. Entidad `Avion` (relación `@ManyToOne` desde `Vuelo`) — decisión de diseño pendiente: ¿entidad propia o campos sueltos en `Vuelo`?
-2. Entidad `Usuario` con roles (`ADMIN` / `USUARIO`)
-3. Entidad `Reserva` (relaciona `Usuario` + `Vuelo`, lógica de negocio con transacciones reales)
-4. Seguridad con Spring Security + JWT sobre `Usuario`/roles
+1. ~~Entidad `Avion` (relación `@ManyToOne` desde `Vuelo`)~~ ✅
+2. ~~Entidad `Usuario` con roles (`ADMIN` / `USUARIO`)~~ ✅
+3. ~~Entidad `Reserva` (relaciona `Usuario` + `Vuelo`, lógica de negocio con transacciones reales)~~ ✅
+4. ~~Seguridad con Spring Security + JWT sobre `Usuario`/roles~~ ✅
 5. Testing con JUnit + Mockito
 6. Documentación con Swagger/OpenAPI
 7. Repaso final y buenas prácticas
