@@ -35,6 +35,7 @@ public class AvionController {
                 .toList();
     }
 
+    @GetMapping("/{id}")
     public ResponseEntity<AvionResponseDTO> buscarPorId(@PathVariable Long id) {
         return avionService.buscarPorId(id)
                 .map(AvionMapper::toResponseDTO)

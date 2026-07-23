@@ -35,6 +35,7 @@ public class UsuarioController {
                 .toList();
     }
 
+    @GetMapping("/{id}")
     public ResponseEntity<UsuarioResponseDTO> bucarPorId(@PathVariable Long id) {
         return usuarioService.buscarPorId(id)
                 .map(UsuarioMapper::toResponseDTO)

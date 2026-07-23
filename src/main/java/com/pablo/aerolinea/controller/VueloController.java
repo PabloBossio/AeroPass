@@ -43,12 +43,11 @@ public class VueloController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @GetMapping("/buscar")
     public List<VueloResponseDto> buscarPorRuta(@RequestParam String origen, @RequestParam String destino) {
         return vueloService.buscarPorOrigenYDestino(origen, destino).stream()
                 .map(VueloMapper::toResponseDto)
                 .toList();
     }
-
-
 
 }

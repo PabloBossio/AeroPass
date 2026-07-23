@@ -19,7 +19,7 @@ public class AvionMapper {
         AvionResponseDTO dto = new AvionResponseDTO();
         dto.setId(avion.getId());
         dto.setModelo(avion.getModelo());
-        dto.setMatricula(dto.getMatricula());
+        dto.setMatricula(avion.getMatricula());
         dto.setCapacidad(avion.getCapacidad());
         dto.setAerolinea(avion.getAerolinea());
         return dto;
