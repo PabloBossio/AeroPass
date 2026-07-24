@@ -1,0 +1,158 @@
+package com.pablo.aerolinea.controller;
+
+import com.pablo.aerolinea.config.SecurityConfig;
+import com.pablo.aerolinea.dto.UsuarioRequestDTO;
+import com.pablo.aerolinea.exception.ReglaDeNegocioException;
+import com.pablo.aerolinea.model.Rol;
+import com.pablo.aerolinea.model.Usuario;
+import com.pablo.aerolinea.security.JwtUtil;
+import com.pablo.aerolinea.security.UsuarioDetailsService;
+import com.pablo.aerolinea.service.UsuarioService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithAnonymousUser;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(UsuarioController.class)
+@Import(SecurityConfig.class)
+public class UsuarioControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private JsonMapper objectMapper;
+
+    @MockitoBean
+    private UsuarioService usuarioService;
+
+    @MockitoBean
+    private JwtUtil jwtUtil;
+
+    @MockitoBean
+    private UsuarioDetailsService usuarioDetailsService;
+
+    private UsuarioRequestDTO requestValido() {
+        UsuarioRequestDTO dto = new UsuarioRequestDTO();
+        dto.setNombre("Juan Perez");
+        dto.setEmail("juan.perez@gmail.com");
+        dto.setPassword("password123");
+        return dto;
+    }
+
+    private Usuario usuarioCreado() {
+        return Usuario.builder()
+                .id(1L)
+                .nombre("Juan Perez")
+                .email("juan.perez@gmail.com")
+                .password("hashEncriptado")
+                .rol(Rol.USUARIO)
+                .build();
+    }
+
+    @Test
+    @WithAnonymousUser
+    void registrar_conDatosValidos_deberiaDevolver201() throws Exception {
+        when(usuarioService.registrar(any(Usuario.class))).thenReturn(usuarioCreado());
+
+        mockMvc.perform(post("/api/usuarios")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestValido())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.email").value("juan.perez@gmail.com"))
+                .andExpect(jsonPath("$.rol").value("USUARIO"));
+    }
+
+    @Test
+    @WithAnonymousUser
+    void registrar_conEmailDuplicado_deberiaDevolver400() throws Exception {
+        when(usuarioService.registrar(any(Usuario.class)))
+                .thenThrow(new ReglaDeNegocioException("Ya existe un usuario con el email: juan.perez@gmail.com"));
+
+        mockMvc.perform(post("/api/usuarios")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestValido())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @WithAnonymousUser
+    void registrar_conEmailInvalido_deberiaDevolver400() throws Exception {
+        UsuarioRequestDTO request = requestValido();
+        request.setEmail("no-es-un-email");
+
+        mockMvc.perform(post("/api/usuarios")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @WithAnonymousUser
+    void registrar_conPasswordCorta_deberiaDevolver400() throws Exception {
+        UsuarioRequestDTO request = requestValido();
+        request.setPassword("1234");
+
+        mockMvc.perform(post("/api/usuarios")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @WithAnonymousUser
+    void listar_sinAutenticacion_deberiaDevolver403() throws Exception {
+        mockMvc.perform(get("/api/usuarios"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "USUARIO")
+    void listar_conRolUsuario_deveriaDevolver403() throws Exception {
+        mockMvc.perform(get("/api/usuarios"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void listar_conRolAdmin_deberiaDevolverListaUsuarios() throws Exception {
+        when(usuarioService.listarTodos()).thenReturn(List.of(usuarioCreado()));
+
+        mockMvc.perform(get("/api/usuarios"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].email").value("juan.perez@gmail.com"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void buscarPorId_conIdExistente_deberiaDevolver200() throws Exception {
+        when(usuarioService.buscarPorId(1L)).thenReturn(Optional.of(usuarioCreado()));
+
+        mockMvc.perform(get("/api/usuarios/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nombre").value("Juan Perez"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void buscarPorId_conIdInexistente_deberiaDevolver404() throws Exception {
+        when(usuarioService.buscarPorId(99L)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/usuarios/99"))
+                .andExpect(status().isNotFound());
+    }
+}

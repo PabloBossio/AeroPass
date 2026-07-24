@@ -159,12 +159,62 @@ Ojo de sintaxis: con más de un atributo en `@Query` (`value` y `nativeQuery`), 
 
 ---
 
+## Testing (1): JUnit 5 + Mockito — tests de servicio
+
+- **Unit test vs integration test**: un unit test mockea todas las dependencias (`@Mock`) y no levanta contexto de Spring — corre en milisegundos. Un integration test (`@SpringBootTest`) levanta el `ApplicationContext` completo y habla con la base real — corre en segundos. Se vio la diferencia concreta en los tiempos de los propios logs de Maven (6+ segundos para el test de contexto, contra 0.02–0.3 segundos para los tests de servicio). Regla práctica: la mayoría de la lógica de negocio se cubre con unit tests (rápidos, baratos); los integration tests son para verificar que las piezas realmente se conectan bien entre sí, no para repetir cada caso de negocio.
+- **`@ExtendWith(MockitoExtension.class)`**: le dice a JUnit 5 que procese las anotaciones de Mockito (`@Mock`, `@InjectMocks`) en la clase de test.
+- **`@Mock`**: crea un doble de prueba de una dependencia (repositorio, otro service, incluso interfaces de terceros como `PasswordEncoder` — Mockito no distingue, funciona igual). **`@InjectMocks`**: crea una instancia real de la clase bajo test e inyecta automáticamente los `@Mock` declarados arriba (por constructor, si existe uno).
+- **`when(mock.metodo(args)).thenReturn(valor)`**: define qué devuelve el mock ante una llamada puntual. **`.thenThrow(new Excepcion(...))`**: para simular que la dependencia falla. **`.thenAnswer(inv -> inv.getArgument(0))`**: necesario cuando el objeto que se guarda se **construye dentro** del método bajo test (ej. `Reserva.builder()...build()` armado adentro de `crearReserva`) — como el test no tiene una referencia a ese objeto de antemano, no puede hacer `thenReturn(esaInstancia)`; en cambio, le dice al mock "devolvé el mismo argumento que te pasaron", simulando lo que hace un `save()` real de JPA.
+- **`verify(mock, times(n))`** / **`verify(mock, never())`**: confirma que un método del mock se llamó (o no se llamó) una cantidad de veces determinada — útil para probar "fail-fast" (ej. verificar que `passwordEncoder.encode(...)` nunca se llama si el email ya existe, porque el método debería cortar antes).
+- **`any(Clase.class)`**: matcher de Mockito para "no me importa el valor exacto, cualquier instancia de este tipo sirve" — necesario junto con `thenAnswer` en el mismo escenario de arriba.
+- **Mutación visible sobre la misma referencia**: como Java pasa objetos por referencia, si el método bajo test mutza un objeto que el test también tiene referenciado (ej. `vuelo.setAsientosDisponibles(...)` dentro del service), el test puede verificar el resultado leyendo directamente esa misma variable después de llamar al service — no hace falta un mock adicional para "capturar" el cambio.
+- Para escenarios con muchas variantes de un mismo objeto de prueba (ej. un vuelo válido, uno con fecha inválida, uno con precio inválido), usar **métodos helper privados** (`avionValido()`, `vueloValido()`) en vez de `@BeforeEach` — cada llamada arma una instancia nueva e inmutable, evitando que un test folle modifique sin querer el estado que usa otro test.
+
+---
+
+## Testing (2): tests de controller con `@WebMvcTest` + `MockMvc`
+
+- **`@WebMvcTest(Controller.class)`**: a diferencia de `@SpringBootTest`, levanta solo la "capa web" — el controller indicado más la infraestructura de MVC (`@RestControllerAdvice`, filtros, conversores, validación) — sin tocar la base de datos. Mucho más rápido que un integration test completo, pero sigue probando el comportamiento HTTP real (status codes, JSON, seguridad), a diferencia de un unit test de service que no sabe nada de HTTP.
+- **Bug real / concepto clave: el escaneo de `@WebMvcTest` es angosto.** Solo incluye clases con estereotipos reconocidos como "capa web": `@Controller`, `@ControllerAdvice`, `Filter`, `Converter`, `HandlerInterceptor`, `WebMvcConfigurer`, etc. Un `@Service` normal (como `AvionService`) o un `@Component`/`@Configuration` cualquiera (como `JwtUtil`, `UsuarioDetailsService`, o la propia clase `SecurityConfig` con su `@Bean SecurityFilterChain`) **no entran** en ese escaneo aunque estén en el classpath. Esto causó dos síntomas distintos con la misma raíz:
+  - `UnsatisfiedDependencyException` al no encontrar `JwtUtil`/`UsuarioDetailsService` (dependencias de `JwtAuthenticationFilter`, que sí es un `Filter` y por eso sí entra al escaneo) → solución: declararlos como `@MockitoBean` en el test, aunque el test no los use directamente.
+  - Spring Boot cayendo a su **seguridad de fallback por defecto** (HTTP Basic con usuario/contraseña generados, visible en el log como `Using generated security password: ...`) porque no encontraba la `SecurityFilterChain` real (`SecurityConfig` no es un estereotipo reconocido) → solución: `@Import(SecurityConfig.class)` en la clase de test, que fuerza a incluir esa configuración puntual en el contexto reducido.
+- **`@MockitoBean`** (reemplaza al `@MockBean` viejo, deprecado en Spring Boot 4/Framework 6.2): reemplaza un bean del contexto por un mock de Mockito. Funciona tanto para beans "faltantes" (como los de arriba) como para **reemplazar un bean real ya definido** (ej. el `AuthenticationManager` que define `SecurityConfig` vía `@Bean`) cuando el test necesita controlar exactamente qué devuelve, en vez de ejercitar el flujo real completo.
+- **`MockMvc`**: simula peticiones HTTP en memoria, sin levantar un puerto real. `mockMvc.perform(get(...)/post(...)/put(...)).andExpect(status()....).andExpect(jsonPath("$.campo").value(...))`.
+- **`@WithMockUser(roles = "ADMIN")`**: simula un usuario autenticado con determinado rol para ese test puntual, sin pasar por login/JWT real.
+- **Bug real / lección importante: `@WithAnonymousUser` explícito, no "ausencia de anotación".** Para testear el caso "sin autenticación", omitir `@WithMockUser` no alcanza — en cierto orden de ejecución de tests (JUnit no garantiza el orden declarado) apareció una fuga real del contexto de seguridad de un test anterior autenticado como ADMIN, dejando pasar una petición que debía ser anónima. La forma correcta y explícita es anotar `@WithAnonymousUser`, que fuerza un contexto anónimo real para ese test sin depender de lo que haya pasado antes.
+- **Los datos de prueba tienen que respetar las invariantes del dominio.** Si un mapper arma una respuesta completa navegando relaciones (`ReservaResponseDTO` incluye `Vuelo`, que a su vez incluye `Avion`), el objeto de prueba tiene que traer esa cadena completa armada (`Vuelo.builder()...avion(avionValido())...build()`) — si falta un eslabón, explota con `NullPointerException` en tiempo de test, no porque el código de producción esté mal, sino porque el dato de prueba no refleja una invariante real del negocio (un vuelo siempre tiene avión asignado).
+- **`jsonPath(...).value(...)` es sensible al tipo, no solo al valor.** Comparar un campo numérico (`BigDecimal`, `Integer`) contra un `String` entre comillas (`.value("500.00")`) **siempre falla**, aunque el número "se vea igual" — el JSON se deserializa como `Double`/número, y `Double` nunca es `.equals()` a un `String`. Los literales numéricos van sin comillas (`.value(500.00)`); las comillas solo para campos que son realmente texto (ej. un enum serializado por nombre, `"CONFIRMADA"`).
+
+---
+
+## Spring Boot 4 (correcciones sobre información desactualizada)
+
+Spring Boot 4 se lanzó en octubre de 2025, después del corte de conocimiento de la IA que ayudó en este proyecto — varias respuestas iniciales fueron corregidas tras verificar contra documentación oficial actual:
+
+- **Modularización de starters**: `spring-boot-starter-web` pasó a llamarse `spring-boot-starter-webmvc`. Cada starter "principal" ahora tiene un starter de test compañero (`spring-boot-starter-webmvc-test`, `spring-boot-starter-data-jpa-test`, `spring-boot-starter-validation-test`) que ya trae `spring-boot-starter-test` transitivamente — declararlo aparte es redundante, no un error.
+- **Jackson 3**: el paquete pasó de `com.fasterxml.jackson` a `tools.jackson`. El bean autoconfigurado por Spring Boot para JSON ya no es `ObjectMapper` sino `tools.jackson.databind.json.JsonMapper` (config inmutable basada en builder).
+- **`spring-boot-starter-security-test`**: hace falta agregarlo explícitamente (no viene incluido en los otros starters de test) para que `@WithMockUser`/`@WithAnonymousUser` funcionen de forma confiable dentro de un `@WebMvcTest`.
+- **`@WebMvcTest`** cambió de paquete: ahora es `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest` (antes `org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest`).
+
+---
+
+## Herramientas / flujo de trabajo (testing)
+
+- **IntelliJ + JUnit Platform de Spring Boot 4**: el runner interno de tests de IntelliJ puede chocar en versión con las librerías de JUnit Platform que trae Spring Boot 4.1 (`NoSuchMethodError: MethodSelector.getMethodParameterTypes()`). Se soluciona activando "Delegate IDE build/run actions to Maven" (Settings → Build, Execution, Deployment → Build Tools → Maven → Runner) y recargando Maven — así IntelliJ ejecuta los tests vía Maven en vez de su propio motor. Este ajuste no siempre se respeta en atajos de "correr un solo método" (clic en el ícono verde); para eso, mejor crear una configuración de ejecución de tipo Maven con `-Dtest=Clase#metodo`.
+- **Bug recurrente: imports estáticos que IntelliJ autocompleta hacia la clase equivocada.** Pasó varias veces con `post`/`get`/`status`/`jsonPath`: el autocompletado a veces ofrece clases de testing **reactivo** (`MockServerHttpRequest`, para WebFlux) o de testing **del lado cliente** (`MockRestRequestMatchers`, para `RestTemplate`) en vez de las de `MockMvc` (testing del lado servidor con Spring MVC tradicional, que es lo que usa este proyecto). Antídoto: usar wildcards explícitos y verificar el paquete completo antes de aceptar una sugerencia — siempre `org.springframework.test.web.servlet.*`:
+```java
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+```
+
+---
+
 ## Próximos temas pendientes (roadmap)
 
 1. ~~Entidad `Avion` (relación `@ManyToOne` desde `Vuelo`)~~ ✅
 2. ~~Entidad `Usuario` con roles (`ADMIN` / `USUARIO`)~~ ✅
 3. ~~Entidad `Reserva` (relaciona `Usuario` + `Vuelo`, lógica de negocio con transacciones reales)~~ ✅
 4. ~~Seguridad con Spring Security + JWT sobre `Usuario`/roles~~ ✅
-5. Testing con JUnit + Mockito
+5. ~~Testing con JUnit + Mockito~~ ✅
 6. Documentación con Swagger/OpenAPI
 7. Repaso final y buenas prácticas

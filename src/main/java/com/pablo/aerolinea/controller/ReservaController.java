@@ -16,7 +16,7 @@ import java.util.List;
 @RequestMapping("/api/reservas")
 public class ReservaController {
 
-    public final ReservaService reservaService;
+    private final ReservaService reservaService;
 
     public ReservaController(ReservaService reservaService) {
         this.reservaService = reservaService;
@@ -42,16 +42,11 @@ public class ReservaController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ReservaResponseDTO> bucarPorId(@PathVariable Long id) {
+    public ResponseEntity<ReservaResponseDTO> buscarPorId(@PathVariable Long id) {
         return reservaService.buscarPorId(id)
                 .map(ReservarMapper::toResponseDTO)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
-
-
-
-
-
 
 }
